@@ -51,7 +51,7 @@ func (s *Store) Create(ctx context.Context, usr userbus.User) error {
 	// Truque SQL: INSERT com SELECT
 	// Pegamos o role_id da tabela 'role' baseado no nome (:role) passado no struct
 	const q = `
-	INSERT INTO "public"."user"
+	INSERT INTO "public"."users"
 		(user_id, role_id, name, email, password, phone, enabled, created_at, updated_at)
 	VALUES
 		(:user_id, (SELECT role_id FROM "public"."role" WHERE name = :role), :name, :email, :password_hash, :phone, :enabled, :created_at, :updated_at)`
@@ -77,7 +77,7 @@ func (s *Store) Update(ctx context.Context, usr userbus.User) error {
 	// Truque SQL: Update do role_id usando subquery
 	const q = `
 	UPDATE
-		"public"."user"
+		"public"."users"
 	SET 
 		name = :name,
 		email = :email,
@@ -109,7 +109,7 @@ func (s *Store) Update(ctx context.Context, usr userbus.User) error {
 func (s *Store) Delete(ctx context.Context, usr userbus.User) error {
 	const q = `
 	DELETE FROM
-		"public"."user"
+		"public"."users"
 	WHERE
 		user_id = :user_id`
 
@@ -135,7 +135,7 @@ func (s *Store) Query(ctx context.Context, filter userbus.QueryFilter, orderBy o
 		u.user_id, u.name, u.email, u.password AS password_hash, u.phone, u.enabled, u.created_at, u.updated_at,
 		r.name AS role
 	FROM
-		"public"."user" AS u
+		"public"."users" AS u
 	JOIN
 		"public"."role" AS r ON r.role_id = u.role_id`
 
@@ -166,7 +166,7 @@ func (s *Store) Count(ctx context.Context, filter userbus.QueryFilter) (int, err
 	SELECT
 		count(1)
 	FROM
-		"public"."user" AS u` // Alias 'u' caso o filtro use prefixo u.
+		"public"."users" AS u` // Alias 'u' caso o filtro use prefixo u.
 
 	buf := bytes.NewBufferString(q)
 	applyFilter(filter, data, buf)
@@ -194,7 +194,7 @@ func (s *Store) QueryByID(ctx context.Context, userID uuid.UUID) (userbus.User, 
 		u.user_id, u.name, u.email, u.password AS password_hash, u.phone, u.enabled, u.created_at, u.updated_at,
 		r.name AS role
 	FROM
-		"public"."user" AS u
+		"public"."users" AS u
 	JOIN
 		"public"."role" AS r ON r.role_id = u.role_id
 	WHERE 
@@ -224,7 +224,7 @@ func (s *Store) QueryByEmail(ctx context.Context, email mail.Address) (userbus.U
 		u.user_id, u.name, u.email, u.password AS password_hash, u.phone, u.enabled, u.created_at, u.updated_at,
 		r.name AS role
 	FROM
-		"public"."user" AS u
+		"public"."users" AS u
 	JOIN
 		"public"."role" AS r ON r.role_id = u.role_id
 	WHERE

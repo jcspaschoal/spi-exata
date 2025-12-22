@@ -1,9 +1,17 @@
+BEGIN;
+
 -- ==========================================
--- 1. EXTENSÕES, TIPOS E SEGURANÇA
+-- 1. EXTENSÕES E TIPOS
 -- ==========================================
 CREATE SCHEMA IF NOT EXISTS "public";
 
-CREATE TYPE "actions_enum" AS ENUM ('create', 'delete', 'get', 'update');
+-- Tipo enum para ações permitidas
+DO $$
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'actions_enum') THEN
+            CREATE TYPE "actions_enum" AS ENUM ('create', 'delete', 'get', 'update');
+        END IF;
+    END $$;
 
 -- ==========================================
 -- 2. TABELAS DE DOMÍNIO (LOOKUP)
@@ -25,8 +33,10 @@ CREATE TABLE "public"."resource_type" (
 );
 
 -- ==========================================
--- 3. REGISTRY POLIMÓRFICO (Garantia de Consistência)
+-- 3. REGISTRY POLIMÓRFICO (Âncora de Integridade)
 -- ==========================================
+-- Esta tabela centraliza todos os IDs de recursos (dashboards, pages, etc)
+-- para que a tabela ACL possa validar a existência do recurso via FK.
 
 CREATE TABLE "public"."resource" (
                                      "resource_id" uuid NOT NULL,
@@ -41,20 +51,20 @@ CREATE TABLE "public"."resource" (
 -- 4. GESTÃO DE USUÁRIOS
 -- ==========================================
 
-CREATE TABLE "public"."user" (
-                                 "user_id" uuid NOT NULL,
-                                 "role_id" smallint NOT NULL,
-                                 "name" varchar(256) NOT NULL,
-                                 "email" varchar(120) NOT NULL,
-                                 "password" char(60) NOT NULL, -- Otimizado para Bcrypt
-                                 "phone" varchar(16),
-                                 "created_at" timestamptz NOT NULL DEFAULT now(),
-                                 "updated_at" timestamptz NOT NULL DEFAULT now(),
-                                 "enabled" boolean NOT NULL DEFAULT true,
-                                 CONSTRAINT "pk_user" PRIMARY KEY ("user_id"),
-                                 CONSTRAINT "uq_user_email" UNIQUE ("email"),
-                                 CONSTRAINT "uq_user_phone" UNIQUE ("phone"),
-                                 CONSTRAINT "fk_user_role" FOREIGN KEY ("role_id") REFERENCES "public"."role"("role_id")
+CREATE TABLE "public"."users" (
+                                  "user_id" uuid NOT NULL,
+                                  "role_id" smallint NOT NULL,
+                                  "name" varchar(256) NOT NULL,
+                                  "email" varchar(120) NOT NULL,
+                                  "password" char(60) NOT NULL, -- Otimizado para Bcrypt
+                                  "phone" varchar(16),
+                                  "created_at" timestamptz NOT NULL DEFAULT now(),
+                                  "updated_at" timestamptz NOT NULL DEFAULT now(),
+                                  "enabled" boolean NOT NULL DEFAULT true,
+                                  CONSTRAINT "pk_users" PRIMARY KEY ("user_id"),
+                                  CONSTRAINT "uq_users_email" UNIQUE ("email"),
+                                  CONSTRAINT "uq_users_phone" UNIQUE ("phone"),
+                                  CONSTRAINT "fk_users_role" FOREIGN KEY ("role_id") REFERENCES "public"."role"("role_id")
 );
 
 CREATE TABLE "public"."password_reset_token" (
@@ -63,26 +73,29 @@ CREATE TABLE "public"."password_reset_token" (
                                                  "expires_at" timestamptz NOT NULL,
                                                  "created_at" timestamptz NOT NULL DEFAULT now(),
                                                  CONSTRAINT "pk_password_reset_token" PRIMARY KEY ("user_id"),
-                                                 CONSTRAINT "fk_password_reset_token_user" FOREIGN KEY ("user_id") REFERENCES "public"."user"("user_id")
+                                                 CONSTRAINT "fk_password_reset_token_user" FOREIGN KEY ("user_id")
+                                                     REFERENCES "public"."users"("user_id") ON DELETE CASCADE
 );
 
 -- ==========================================
--- 5. RECURSOS (Entidades de Negócio)
+-- 5. ENTIDADES DE NEGÓCIO (Recursos)
 -- ==========================================
 
--- DASHBOARD (Type ID: 1)
+-- DASHBOARD (Resource Type ID: 1)
 CREATE TABLE "public"."dashboard" (
                                       "dashboard_id" uuid NOT NULL,
                                       "resource_type_id" smallint GENERATED ALWAYS AS (1) STORED,
                                       "name" varchar NOT NULL,
                                       "logo" bytea,
+                                      "created_at" timestamptz NOT NULL DEFAULT now(),
+                                      "updated_at" timestamptz NOT NULL DEFAULT now(),
                                       CONSTRAINT "pk_dashboard" PRIMARY KEY ("dashboard_id"),
                                       CONSTRAINT "uq_dashboard_name" UNIQUE ("name"),
                                       CONSTRAINT "fk_dashboard_resource" FOREIGN KEY ("dashboard_id", "resource_type_id")
                                           REFERENCES "public"."resource"("resource_id", "resource_type_id") ON DELETE CASCADE
 );
 
--- PAGE (Type ID: 2)
+-- PAGE (Resource Type ID: 2)
 CREATE TABLE "public"."layout" (
                                    "layout_id" smallint NOT NULL,
                                    "name" varchar NOT NULL,
@@ -115,15 +128,18 @@ CREATE TABLE "public"."page" (
                                  "text" text,
                                  "order" smallint,
                                  "feed_id" uuid,
+                                 "created_at" timestamptz NOT NULL DEFAULT now(),
+                                 "updated_at" timestamptz NOT NULL DEFAULT now(),
                                  CONSTRAINT "pk_page" PRIMARY KEY ("page_id"),
                                  CONSTRAINT "fk_page_resource" FOREIGN KEY ("page_id", "resource_type_id")
                                      REFERENCES "public"."resource"("resource_id", "resource_type_id") ON DELETE CASCADE,
-                                 CONSTRAINT "fk_page_dashboard" FOREIGN KEY ("dashboard_id") REFERENCES "public"."dashboard"("dashboard_id"),
+                                 CONSTRAINT "fk_page_dashboard" FOREIGN KEY ("dashboard_id")
+                                     REFERENCES "public"."dashboard"("dashboard_id") ON DELETE CASCADE,
                                  CONSTRAINT "fk_page_layout" FOREIGN KEY ("layout_id") REFERENCES "public"."layout"("layout_id"),
                                  CONSTRAINT "fk_page_feed" FOREIGN KEY ("feed_id") REFERENCES "public"."feed"("feed_id")
 );
 
--- SUBJECT (Type ID: 3)
+-- SUBJECT (Resource Type ID: 3)
 CREATE TABLE "public"."widget_type" (
                                         "widget_type_id" smallint NOT NULL,
                                         "name" varchar NOT NULL,
@@ -146,7 +162,8 @@ CREATE TABLE "public"."subject" (
                                     CONSTRAINT "pk_subject" PRIMARY KEY ("subject_id"),
                                     CONSTRAINT "fk_subject_resource" FOREIGN KEY ("subject_id", "resource_type_id")
                                         REFERENCES "public"."resource"("resource_id", "resource_type_id") ON DELETE CASCADE,
-                                    CONSTRAINT "fk_subject_page" FOREIGN KEY ("page_id") REFERENCES "public"."page"("page_id"),
+                                    CONSTRAINT "fk_subject_page" FOREIGN KEY ("page_id")
+                                        REFERENCES "public"."page"("page_id") ON DELETE CASCADE,
                                     CONSTRAINT "fk_subject_widget_type" FOREIGN KEY ("widget_id") REFERENCES "public"."widget_type"("widget_type_id")
 );
 
@@ -158,37 +175,51 @@ CREATE TABLE "public"."acl" (
                                 "resource_id" uuid NOT NULL,
                                 "user_id" uuid NOT NULL,
                                 "resource_type_id" smallint NOT NULL,
-                                "actions" actions_enum NOT NULL,
+                                "actions" actions_enum[] NOT NULL, -- Suporta múltiplas ações ex: {get, update}
+                                "created_at" timestamptz NOT NULL DEFAULT now(),
+                                "updated_at" timestamptz NOT NULL DEFAULT now(),
                                 CONSTRAINT "pk_acl" PRIMARY KEY ("resource_id", "user_id"),
                                 CONSTRAINT "fk_acl_resource_registry" FOREIGN KEY ("resource_id", "resource_type_id")
-                                    REFERENCES "public"."resource"("resource_id", "resource_type_id"),
-                                CONSTRAINT "fk_acl_user" FOREIGN KEY ("user_id") REFERENCES "public"."user"("user_id")
+                                    REFERENCES "public"."resource"("resource_id", "resource_type_id") ON DELETE CASCADE,
+                                CONSTRAINT "fk_acl_user" FOREIGN KEY ("user_id")
+                                    REFERENCES "public"."users"("user_id") ON DELETE CASCADE
 );
 
--- ==========================================
--- 7. TUNING DE STORAGE (JSONB & BYTEA)
--- ==========================================
 
--- Reduz overhead de CPU na descompressão para buscas intensivas
+CREATE TABLE "public"."role_policy" (
+                                        "role_id" smallint NOT NULL,
+                                        "resource_type_id" smallint NOT NULL,
+                                        "actions" actions_enum[] NOT NULL,
+                                        CONSTRAINT "pk_role_policy" PRIMARY KEY ("role_id", "resource_type_id"),
+                                        CONSTRAINT "fk_role_policy_role" FOREIGN KEY ("role_id")
+                                            REFERENCES "public"."role"("role_id") ON DELETE CASCADE,
+                                        CONSTRAINT "fk_role_policy_resource_type" FOREIGN KEY ("resource_type_id")
+                                            REFERENCES "public"."resource_type"("resource_type_id") ON DELETE CASCADE
+);
+
+
+-- Tuning de armazenamento para campos JSONB grandes
 ALTER TABLE "public"."subject" ALTER COLUMN "result" SET STORAGE EXTERNAL;
 ALTER TABLE "public"."subject" ALTER COLUMN "analyst_modification" SET STORAGE EXTERNAL;
 
+-- ÍNDICES
 
--- ==========================================
--- 8. ÍNDICES E PERFORMANCE (POSTGRES 18)
--- ==========================================
-
--- Índice ACL otimizado para Index-Only Scan (Cobre 90% das queries de permissão)
+-- Busca rápida de permissões (Index-Only Scan)
 CREATE INDEX "idx_acl_lookup_composite" ON "public"."acl" ("user_id", "resource_type_id")
     INCLUDE ("actions", "resource_id");
 
--- GIN com path_ops para buscas ultra-rápidas dentro do JSONB (Containment)
+-- Busca em JSONB (Containment)
 CREATE INDEX "idx_subject_result_path_ops" ON "public"."subject" USING GIN ("result" jsonb_path_ops);
 CREATE INDEX "idx_subject_mod_path_ops" ON "public"."subject" USING GIN ("analyst_modification" jsonb_path_ops);
 
--- B-Tree para ordenação e filtragem de hierarquia
+-- Hierarquia e Ordenação
 CREATE INDEX "idx_page_dash_hierarchy" ON "public"."page" ("dashboard_id", "order", "page_id");
 CREATE INDEX "idx_subject_page_hierarchy" ON "public"."subject" ("page_id", "order", "subject_id");
 
--- Índice para busca rápida de recursos por tipo no Registry
+-- Busca de integridade no Registry
 CREATE INDEX "idx_resource_registry_lookup" ON "public"."resource" ("resource_type_id", "resource_id");
+
+-- Expiração de tokens
+CREATE INDEX "idx_password_token_expiry" ON "public"."password_reset_token" ("expires_at");
+
+COMMIT;
