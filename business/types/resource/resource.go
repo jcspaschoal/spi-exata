@@ -8,6 +8,7 @@ var (
 	Dashboard = newResource("DASHBOARD")
 	Subject   = newResource("SUBJECT")
 	Page      = newResource("PAGE")
+	User      = newResource("User")
 )
 
 // =============================================================================

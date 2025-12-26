@@ -1,225 +1,258 @@
+/*
+ * ==============================================================================================
+ * CORE INFRASTRUCTURE - ENTERPRISE MULTI-TENANT SAAS
+ * ==============================================================================================
+ * Engine: PostgreSQL 18
+ * Optimizations: Native UUIDv7, Natural/Composite Keys (No unnecessary surrogates)
+ * Model: 1 User = 1 Tenant (Strict), Hybrid Access Control
+ * ==============================================================================================
+ */
+
 BEGIN;
 
--- ==========================================
--- 1. EXTENSÕES E TIPOS
--- ==========================================
+-- 1. CONFIGURAÇÕES
+SET client_min_messages TO WARNING;
 CREATE SCHEMA IF NOT EXISTS "public";
 
--- Tipo enum para ações permitidas
-DO $$
-    BEGIN
-        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'actions_enum') THEN
-            CREATE TYPE "actions_enum" AS ENUM ('create', 'delete', 'get', 'update');
-        END IF;
-    END $$;
+-- 2. ENUMS E DOMÍNIOS
+DO $$ BEGIN
+    CREATE TYPE "actions_enum" AS ENUM ('create', 'delete', 'get', 'update', 'publish');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
--- ==========================================
--- 2. TABELAS DE DOMÍNIO (LOOKUP)
--- ==========================================
+-- 3. TENANCY (Raiz)
+CREATE TABLE "public"."tenant" (
+                                   "tenant_id"   uuid NOT NULL DEFAULT uuidv7(), -- PG18 Native
+                                   "name"        varchar(256) NOT NULL,
+                                   "slug"        varchar(64) NOT NULL,
+                                   "enabled"     boolean NOT NULL DEFAULT true,
+                                   "created_at"  timestamptz NOT NULL DEFAULT now(),
+                                   "updated_at"  timestamptz NOT NULL DEFAULT now(),
 
+                                   CONSTRAINT "pk_tenant" PRIMARY KEY ("tenant_id"),
+                                   CONSTRAINT "uq_tenant_slug" UNIQUE ("slug")
+);
+CREATE INDEX "idx_tenant_slug" ON "public"."tenant" ("slug");
+
+-- 4. METADADOS GLOBAIS
 CREATE TABLE "public"."role" (
                                  "role_id" smallint NOT NULL,
-                                 "name" varchar(50) NOT NULL,
+                                 "name"    varchar(50) NOT NULL,
                                  CONSTRAINT "pk_role" PRIMARY KEY ("role_id"),
                                  CONSTRAINT "uq_role_name" UNIQUE ("name")
 );
 
 CREATE TABLE "public"."resource_type" (
                                           "resource_type_id" smallint NOT NULL,
-                                          "name" varchar(50) NOT NULL,
+                                          "name"             varchar(50) NOT NULL,
                                           CONSTRAINT "pk_resource_type" PRIMARY KEY ("resource_type_id"),
-                                          CONSTRAINT "uq_resource_type_name" UNIQUE ("name"),
                                           CONSTRAINT "uq_resource_type_composite" UNIQUE ("resource_type_id", "name")
 );
 
--- ==========================================
--- 3. REGISTRY POLIMÓRFICO (Âncora de Integridade)
--- ==========================================
--- Esta tabela centraliza todos os IDs de recursos (dashboards, pages, etc)
--- para que a tabela ACL possa validar a existência do recurso via FK.
-
-CREATE TABLE "public"."resource" (
-                                     "resource_id" uuid NOT NULL,
-                                     "resource_type_id" smallint NOT NULL,
-                                     CONSTRAINT "pk_resource" PRIMARY KEY ("resource_id"),
-                                     CONSTRAINT "fk_resource_type" FOREIGN KEY ("resource_type_id")
-                                         REFERENCES "public"."resource_type"("resource_type_id"),
-                                     CONSTRAINT "uq_resource_composite" UNIQUE ("resource_id", "resource_type_id")
+CREATE TABLE "public"."layout" (
+                                   "layout_id" smallint NOT NULL PRIMARY KEY, "name" varchar NOT NULL UNIQUE
+);
+CREATE TABLE "public"."feed_category" (
+                                          "feed_category_id" smallint NOT NULL PRIMARY KEY, "name" varchar NOT NULL UNIQUE
+);
+CREATE TABLE "public"."widget_type" (
+                                        "widget_type_id" smallint NOT NULL PRIMARY KEY, "name" varchar NOT NULL UNIQUE
 );
 
--- ==========================================
--- 4. GESTÃO DE USUÁRIOS
--- ==========================================
-
+-- 5. USUÁRIOS (Identidade Pura)
 CREATE TABLE "public"."users" (
-                                  "user_id" uuid NOT NULL,
-                                  "role_id" smallint NOT NULL,
-                                  "name" varchar(256) NOT NULL,
-                                  "email" varchar(120) NOT NULL,
-                                  "password" char(60) NOT NULL, -- Otimizado para Bcrypt
-                                  "phone" varchar(16),
+                                  "user_id"    uuid NOT NULL DEFAULT uuidv7(),
+                                  "role_id"    smallint NOT NULL, -- O 'Perfil' é intrínseco ao usuário
+                                  "name"       varchar(256) NOT NULL,
+                                  "email"      varchar(120) NOT NULL,
+                                  "password"   char(60) NOT NULL,
+                                  "enabled"    boolean NOT NULL DEFAULT true,
                                   "created_at" timestamptz NOT NULL DEFAULT now(),
                                   "updated_at" timestamptz NOT NULL DEFAULT now(),
-                                  "enabled" boolean NOT NULL DEFAULT true,
+
                                   CONSTRAINT "pk_users" PRIMARY KEY ("user_id"),
                                   CONSTRAINT "uq_users_email" UNIQUE ("email"),
-                                  CONSTRAINT "uq_users_phone" UNIQUE ("phone"),
                                   CONSTRAINT "fk_users_role" FOREIGN KEY ("role_id") REFERENCES "public"."role"("role_id")
 );
 
 CREATE TABLE "public"."password_reset_token" (
-                                                 "user_id" uuid NOT NULL,
+                                                 "user_id"    uuid NOT NULL,
                                                  "token_hash" varchar NOT NULL,
                                                  "expires_at" timestamptz NOT NULL,
-                                                 "created_at" timestamptz NOT NULL DEFAULT now(),
-                                                 CONSTRAINT "pk_password_reset_token" PRIMARY KEY ("user_id"),
-                                                 CONSTRAINT "fk_password_reset_token_user" FOREIGN KEY ("user_id")
-                                                     REFERENCES "public"."users"("user_id") ON DELETE CASCADE
+                                                 CONSTRAINT "pk_password_reset" PRIMARY KEY ("user_id"),
+                                                 CONSTRAINT "fk_token_user" FOREIGN KEY ("user_id") REFERENCES "public"."users"("user_id") ON DELETE CASCADE
 );
 
--- ==========================================
--- 5. ENTIDADES DE NEGÓCIO (Recursos)
--- ==========================================
+-- 6. VÍNCULO DE TENANCY (Membership 1:1)
+/*
+ * Otimização: Removemos 'membership_id'.
+ * A PK é o próprio 'user_id'. Isso garante fisicamente que um usuário
+ * só pode ter UM registro nesta tabela, cumprindo a regra "1 User = 1 Tenant".
+ */
+CREATE TABLE "public"."tenant_membership" (
+                                              "user_id"    uuid NOT NULL, -- PK (Natural Key)
+                                              "tenant_id"  uuid NOT NULL,
+                                              "created_at" timestamptz NOT NULL DEFAULT now(),
 
--- DASHBOARD (Resource Type ID: 1)
+                                              CONSTRAINT "pk_tenant_membership" PRIMARY KEY ("user_id"),
+                                              CONSTRAINT "fk_membership_user" FOREIGN KEY ("user_id") REFERENCES "public"."users"("user_id") ON DELETE CASCADE,
+                                              CONSTRAINT "fk_membership_tenant" FOREIGN KEY ("tenant_id") REFERENCES "public"."tenant"("tenant_id") ON DELETE CASCADE
+);
+-- Index reverso para listar todos os usuários de um tenant rapidamente
+CREATE INDEX "idx_membership_tenant" ON "public"."tenant_membership" ("tenant_id");
+
+
+-- 7. REGISTRY (Supertype)
+CREATE TABLE "public"."resource" (
+                                     "resource_id"      uuid NOT NULL DEFAULT uuidv7(),
+                                     "resource_type_id" smallint NOT NULL,
+                                     "tenant_id"        uuid NOT NULL,
+
+                                     CONSTRAINT "pk_resource" PRIMARY KEY ("resource_id"),
+                                     CONSTRAINT "fk_resource_type" FOREIGN KEY ("resource_type_id") REFERENCES "public"."resource_type"("resource_type_id"),
+                                     CONSTRAINT "fk_resource_tenant" FOREIGN KEY ("tenant_id") REFERENCES "public"."tenant"("tenant_id") ON DELETE RESTRICT,
+                                     CONSTRAINT "uq_resource_integrity" UNIQUE ("resource_id", "resource_type_id", "tenant_id")
+);
+CREATE INDEX "idx_resource_tenant_type" ON "public"."resource" ("tenant_id", "resource_type_id");
+
+-- 8. DASHBOARD (Com Domínio)
 CREATE TABLE "public"."dashboard" (
-                                      "dashboard_id" uuid NOT NULL,
+                                      "dashboard_id"     uuid NOT NULL,
                                       "resource_type_id" smallint GENERATED ALWAYS AS (1) STORED,
-                                      "name" varchar NOT NULL,
-                                      "logo" bytea,
-                                      "created_at" timestamptz NOT NULL DEFAULT now(),
-                                      "updated_at" timestamptz NOT NULL DEFAULT now(),
+                                      "tenant_id"        uuid NOT NULL,
+                                      "name"             varchar NOT NULL,
+                                      "domain"           varchar(255), -- Multi-domain support
+                                      "logo"             bytea,
+                                      "created_at"       timestamptz NOT NULL DEFAULT now(),
+                                      "updated_at"       timestamptz NOT NULL DEFAULT now(),
+
                                       CONSTRAINT "pk_dashboard" PRIMARY KEY ("dashboard_id"),
-                                      CONSTRAINT "uq_dashboard_name" UNIQUE ("name"),
-                                      CONSTRAINT "fk_dashboard_resource" FOREIGN KEY ("dashboard_id", "resource_type_id")
-                                          REFERENCES "public"."resource"("resource_id", "resource_type_id") ON DELETE CASCADE
+                                      CONSTRAINT "uq_dashboard_domain" UNIQUE ("domain"),
+                                      CONSTRAINT "fk_dashboard_resource_integrity" FOREIGN KEY ("dashboard_id", "resource_type_id", "tenant_id")
+                                          REFERENCES "public"."resource"("resource_id", "resource_type_id", "tenant_id") ON DELETE CASCADE
 );
+CREATE INDEX "idx_dashboard_domain" ON "public"."dashboard" ("domain");
 
--- PAGE (Resource Type ID: 2)
-CREATE TABLE "public"."layout" (
-                                   "layout_id" smallint NOT NULL,
-                                   "name" varchar NOT NULL,
-                                   "description" varchar NOT NULL,
-                                   CONSTRAINT "pk_layout" PRIMARY KEY ("layout_id"),
-                                   CONSTRAINT "uq_layout_name" UNIQUE ("name")
-);
+-- 9. CONTROLE DE ACESSO GRANULAR (Composite Key)
+/*
+ * Otimização: Removemos 'access_id'.
+ * A PK é composta (user_id, dashboard_id).
+ * Isso impede duplicatas e otimiza a busca direta "User tem acesso a Dash?".
+ */
+CREATE TABLE "public"."user_dashboard_access" (
+                                                  "user_id"      uuid NOT NULL,
+                                                  "dashboard_id" uuid NOT NULL,
+                                                  "tenant_id"    uuid NOT NULL, -- Denormalizado para integridade/RLS awareness
+                                                  "created_at"   timestamptz NOT NULL DEFAULT now(),
 
-CREATE TABLE "public"."feed_category" (
-                                          "feed_category_id" smallint NOT NULL,
-                                          "name" varchar NOT NULL,
-                                          CONSTRAINT "pk_feed_category" PRIMARY KEY ("feed_category_id"),
-                                          CONSTRAINT "uq_feed_category_name" UNIQUE ("name")
+                                                  CONSTRAINT "pk_user_dashboard_access" PRIMARY KEY ("user_id", "dashboard_id"),
+
+                                                  CONSTRAINT "fk_access_user" FOREIGN KEY ("user_id")
+                                                      REFERENCES "public"."users"("user_id") ON DELETE CASCADE,
+
+                                                  CONSTRAINT "fk_access_dashboard" FOREIGN KEY ("dashboard_id")
+                                                      REFERENCES "public"."dashboard"("dashboard_id") ON DELETE CASCADE
+
+    -- Nota: Idealmente, garantiríamos que o dashboard e o user são do mesmo tenant via trigger ou app.
 );
+-- Index reverso não é necessário pois a PK já cobre a busca principal.
+-- Talvez um index em dashboard_id para "Quem tem acesso a este dash?":
+CREATE INDEX "idx_access_dashboard_reverse" ON "public"."user_dashboard_access" ("dashboard_id");
+
+
+-- 10. DEMAIS ENTIDADES (Page, Feed, Subject)
 
 CREATE TABLE "public"."feed" (
-                                 "feed_id" uuid NOT NULL,
-                                 "keywords" varchar(500) NOT NULL,
+                                 "feed_id"     uuid NOT NULL DEFAULT uuidv7(),
+                                 "tenant_id"   uuid NOT NULL,
+                                 "keywords"    varchar(500) NOT NULL,
                                  "category_id" smallint NOT NULL,
                                  CONSTRAINT "pk_feed" PRIMARY KEY ("feed_id"),
-                                 CONSTRAINT "fk_feed_feed_category" FOREIGN KEY ("category_id") REFERENCES "public"."feed_category"("feed_category_id")
+                                 CONSTRAINT "fk_feed_tenant" FOREIGN KEY ("tenant_id") REFERENCES "public"."tenant"("tenant_id"),
+                                 CONSTRAINT "fk_feed_category" FOREIGN KEY ("category_id") REFERENCES "public"."feed_category"("feed_category_id")
 );
 
 CREATE TABLE "public"."page" (
-                                 "page_id" uuid NOT NULL,
+                                 "page_id"          uuid NOT NULL,
                                  "resource_type_id" smallint GENERATED ALWAYS AS (2) STORED,
-                                 "dashboard_id" uuid NOT NULL,
-                                 "layout_id" smallint NOT NULL,
-                                 "title" varchar NOT NULL,
-                                 "text" text,
-                                 "order" smallint,
-                                 "feed_id" uuid,
-                                 "created_at" timestamptz NOT NULL DEFAULT now(),
-                                 "updated_at" timestamptz NOT NULL DEFAULT now(),
+                                 "tenant_id"        uuid NOT NULL,
+                                 "dashboard_id"     uuid NOT NULL,
+                                 "layout_id"        smallint NOT NULL,
+                                 "title"            varchar NOT NULL,
+                                 "text"             text,
+                                 "order"            smallint,
+                                 "feed_id"          uuid,
+                                 "created_at"       timestamptz NOT NULL DEFAULT now(),
+                                 "updated_at"       timestamptz NOT NULL DEFAULT now(),
+
                                  CONSTRAINT "pk_page" PRIMARY KEY ("page_id"),
-                                 CONSTRAINT "fk_page_resource" FOREIGN KEY ("page_id", "resource_type_id")
-                                     REFERENCES "public"."resource"("resource_id", "resource_type_id") ON DELETE CASCADE,
-                                 CONSTRAINT "fk_page_dashboard" FOREIGN KEY ("dashboard_id")
-                                     REFERENCES "public"."dashboard"("dashboard_id") ON DELETE CASCADE,
+                                 CONSTRAINT "fk_page_resource_integrity" FOREIGN KEY ("page_id", "resource_type_id", "tenant_id")
+                                     REFERENCES "public"."resource"("resource_id", "resource_type_id", "tenant_id") ON DELETE CASCADE,
+                                 CONSTRAINT "fk_page_dashboard" FOREIGN KEY ("dashboard_id") REFERENCES "public"."dashboard"("dashboard_id") ON DELETE CASCADE,
                                  CONSTRAINT "fk_page_layout" FOREIGN KEY ("layout_id") REFERENCES "public"."layout"("layout_id"),
                                  CONSTRAINT "fk_page_feed" FOREIGN KEY ("feed_id") REFERENCES "public"."feed"("feed_id")
 );
-
--- SUBJECT (Resource Type ID: 3)
-CREATE TABLE "public"."widget_type" (
-                                        "widget_type_id" smallint NOT NULL,
-                                        "name" varchar NOT NULL,
-                                        CONSTRAINT "pk_widget_type" PRIMARY KEY ("widget_type_id"),
-                                        CONSTRAINT "uq_widget_type_name" UNIQUE ("name")
-);
+CREATE INDEX "idx_page_dashboard_order" ON "public"."page" ("dashboard_id", "order");
 
 CREATE TABLE "public"."subject" (
-                                    "subject_id" uuid NOT NULL,
-                                    "resource_type_id" smallint GENERATED ALWAYS AS (3) STORED,
-                                    "title" varchar NOT NULL,
-                                    "order" smallint NOT NULL,
-                                    "description" varchar NOT NULL,
+                                    "subject_id"           uuid NOT NULL,
+                                    "resource_type_id"     smallint GENERATED ALWAYS AS (3) STORED,
+                                    "tenant_id"            uuid NOT NULL,
+                                    "page_id"              uuid,
+                                    "widget_id"            smallint NOT NULL,
+                                    "title"                varchar NOT NULL,
+                                    "order"                smallint NOT NULL,
+                                    "description"          varchar NOT NULL,
+                                    "result"               jsonb NOT NULL,
                                     "analyst_modification" jsonb,
-                                    "result" jsonb NOT NULL,
-                                    "widget_id" smallint NOT NULL,
-                                    "created_at" timestamptz NOT NULL DEFAULT now(),
-                                    "updated_at" timestamptz NOT NULL DEFAULT now(),
-                                    "page_id" uuid,
+                                    "created_at"           timestamptz NOT NULL DEFAULT now(),
+                                    "updated_at"           timestamptz NOT NULL DEFAULT now(),
+
                                     CONSTRAINT "pk_subject" PRIMARY KEY ("subject_id"),
-                                    CONSTRAINT "fk_subject_resource" FOREIGN KEY ("subject_id", "resource_type_id")
-                                        REFERENCES "public"."resource"("resource_id", "resource_type_id") ON DELETE CASCADE,
-                                    CONSTRAINT "fk_subject_page" FOREIGN KEY ("page_id")
-                                        REFERENCES "public"."page"("page_id") ON DELETE CASCADE,
-                                    CONSTRAINT "fk_subject_widget_type" FOREIGN KEY ("widget_id") REFERENCES "public"."widget_type"("widget_type_id")
+                                    CONSTRAINT "fk_subject_resource_integrity" FOREIGN KEY ("subject_id", "resource_type_id", "tenant_id")
+                                        REFERENCES "public"."resource"("resource_id", "resource_type_id", "tenant_id") ON DELETE CASCADE,
+                                    CONSTRAINT "fk_subject_page" FOREIGN KEY ("page_id") REFERENCES "public"."page"("page_id") ON DELETE CASCADE,
+                                    CONSTRAINT "fk_subject_widget" FOREIGN KEY ("widget_id") REFERENCES "public"."widget_type"("widget_type_id")
 );
 
--- ==========================================
--- 6. ACL (Access Control List)
--- ==========================================
-
-CREATE TABLE "public"."acl" (
-                                "resource_id" uuid NOT NULL,
-                                "user_id" uuid NOT NULL,
-                                "resource_type_id" smallint NOT NULL,
-                                "actions" actions_enum[] NOT NULL, -- Suporta múltiplas ações ex: {get, update}
-                                "created_at" timestamptz NOT NULL DEFAULT now(),
-                                "updated_at" timestamptz NOT NULL DEFAULT now(),
-                                CONSTRAINT "pk_acl" PRIMARY KEY ("resource_id", "user_id"),
-                                CONSTRAINT "fk_acl_resource_registry" FOREIGN KEY ("resource_id", "resource_type_id")
-                                    REFERENCES "public"."resource"("resource_id", "resource_type_id") ON DELETE CASCADE,
-                                CONSTRAINT "fk_acl_user" FOREIGN KEY ("user_id")
-                                    REFERENCES "public"."users"("user_id") ON DELETE CASCADE
-);
-
-
-CREATE TABLE "public"."role_policy" (
-                                        "role_id" smallint NOT NULL,
-                                        "resource_type_id" smallint NOT NULL,
-                                        "actions" actions_enum[] NOT NULL,
-                                        CONSTRAINT "pk_role_policy" PRIMARY KEY ("role_id", "resource_type_id"),
-                                        CONSTRAINT "fk_role_policy_role" FOREIGN KEY ("role_id")
-                                            REFERENCES "public"."role"("role_id") ON DELETE CASCADE,
-                                        CONSTRAINT "fk_role_policy_resource_type" FOREIGN KEY ("resource_type_id")
-                                            REFERENCES "public"."resource_type"("resource_type_id") ON DELETE CASCADE
-);
-
-
--- Tuning de armazenamento para campos JSONB grandes
 ALTER TABLE "public"."subject" ALTER COLUMN "result" SET STORAGE EXTERNAL;
-ALTER TABLE "public"."subject" ALTER COLUMN "analyst_modification" SET STORAGE EXTERNAL;
+CREATE INDEX "idx_subject_page_order" ON "public"."subject" ("page_id", "order");
+CREATE INDEX "idx_subject_result_gin" ON "public"."subject" USING GIN ("result" jsonb_path_ops);
 
--- ÍNDICES
+-- 11. SEGURANÇA (RLS)
+-- Isolamento de dados baseado em Tenant.
+-- A lógica granular (User -> Dashboard) é feita na APP antes de chegar aqui.
 
--- Busca rápida de permissões (Index-Only Scan)
-CREATE INDEX "idx_acl_lookup_composite" ON "public"."acl" ("user_id", "resource_type_id")
-    INCLUDE ("actions", "resource_id");
+ALTER TABLE "public"."resource" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "public"."dashboard" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "public"."page" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "public"."subject" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "public"."feed" ENABLE ROW LEVEL SECURITY;
 
--- Busca em JSONB (Containment)
-CREATE INDEX "idx_subject_result_path_ops" ON "public"."subject" USING GIN ("result" jsonb_path_ops);
-CREATE INDEX "idx_subject_mod_path_ops" ON "public"."subject" USING GIN ("analyst_modification" jsonb_path_ops);
+CREATE POLICY "tenant_isolation_resource" ON "public"."resource" FOR ALL USING (
+    tenant_id = current_setting('app.current_tenant', true)::uuid
+        OR current_setting('app.global_access', true) = 'true'
+    );
 
--- Hierarquia e Ordenação
-CREATE INDEX "idx_page_dash_hierarchy" ON "public"."page" ("dashboard_id", "order", "page_id");
-CREATE INDEX "idx_subject_page_hierarchy" ON "public"."subject" ("page_id", "order", "subject_id");
+CREATE POLICY "tenant_isolation_dashboard" ON "public"."dashboard" FOR ALL USING (
+    tenant_id = current_setting('app.current_tenant', true)::uuid
+        OR current_setting('app.global_access', true) = 'true'
+    );
 
--- Busca de integridade no Registry
-CREATE INDEX "idx_resource_registry_lookup" ON "public"."resource" ("resource_type_id", "resource_id");
+CREATE POLICY "tenant_isolation_page" ON "public"."page" FOR ALL USING (
+    tenant_id = current_setting('app.current_tenant', true)::uuid
+        OR current_setting('app.global_access', true) = 'true'
+    );
 
--- Expiração de tokens
-CREATE INDEX "idx_password_token_expiry" ON "public"."password_reset_token" ("expires_at");
+CREATE POLICY "tenant_isolation_subject" ON "public"."subject" FOR ALL USING (
+    tenant_id = current_setting('app.current_tenant', true)::uuid
+        OR current_setting('app.global_access', true) = 'true'
+    );
+
+CREATE POLICY "tenant_isolation_feed" ON "public"."feed" FOR ALL USING (
+    tenant_id = current_setting('app.current_tenant', true)::uuid
+        OR current_setting('app.global_access', true) = 'true'
+    );
 
 COMMIT;

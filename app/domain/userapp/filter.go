@@ -6,10 +6,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jcpaschoal/spi-exata/app/sdk/errs"
 	"github.com/jcpaschoal/spi-exata/business/domain/userbus"
 	"github.com/jcpaschoal/spi-exata/business/types/name"
 )
 
+// queryParams struct interna para capturar os dados crus da URL.
 type queryParams struct {
 	Page             string
 	Rows             string
@@ -21,10 +23,11 @@ type queryParams struct {
 	EndCreatedDate   string
 }
 
-func parseQueryParams(r *http.Request) (queryParams, error) {
+// parseQueryParams extrai os parâmetros da request.
+func parseQueryParams(r *http.Request) queryParams {
 	values := r.URL.Query()
 
-	filter := queryParams{
+	return queryParams{
 		Page:             values.Get("page"),
 		Rows:             values.Get("rows"),
 		OrderBy:          values.Get("orderBy"),
@@ -34,10 +37,10 @@ func parseQueryParams(r *http.Request) (queryParams, error) {
 		StartCreatedDate: values.Get("start_created_date"),
 		EndCreatedDate:   values.Get("end_created_date"),
 	}
-
-	return filter, nil
 }
 
+// parseFilter valida e converte os parâmetros crus para o filtro de domínio.
+// Retorna erro agregado (FieldErrors) se houver falhas de validação.
 func parseFilter(qp queryParams) (userbus.QueryFilter, error) {
 	var fieldErrors errs.FieldErrors
 	var filter userbus.QueryFilter
@@ -53,10 +56,10 @@ func parseFilter(qp queryParams) (userbus.QueryFilter, error) {
 	}
 
 	if qp.Name != "" {
-		name, err := name.Parse(qp.Name)
+		nme, err := name.Parse(qp.Name)
 		switch err {
 		case nil:
-			filter.Name = &name
+			filter.Name = &nme
 		default:
 			fieldErrors.Add("name", err)
 		}
@@ -72,21 +75,23 @@ func parseFilter(qp queryParams) (userbus.QueryFilter, error) {
 		}
 	}
 
+	// Atenção: Mapeado para StartCreatedAt (conforme userbus/filter.go)
 	if qp.StartCreatedDate != "" {
 		t, err := time.Parse(time.RFC3339, qp.StartCreatedDate)
 		switch err {
 		case nil:
-			filter.StartCreatedDate = &t
+			filter.StartCreatedAt = &t
 		default:
 			fieldErrors.Add("start_created_date", err)
 		}
 	}
 
+	// Atenção: Mapeado para EndCreatedAt (conforme userbus/filter.go)
 	if qp.EndCreatedDate != "" {
 		t, err := time.Parse(time.RFC3339, qp.EndCreatedDate)
 		switch err {
 		case nil:
-			filter.StartCreatedAt = &t
+			filter.EndCreatedAt = &t
 		default:
 			fieldErrors.Add("end_created_date", err)
 		}

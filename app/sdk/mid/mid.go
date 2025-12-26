@@ -29,7 +29,33 @@ const (
 	userIDKey
 	userKey
 	trKey
+	keyTenantID
+	dashboardID
 )
+
+func setTenantID(ctx context.Context, tenantID uuid.UUID) context.Context {
+	return context.WithValue(ctx, keyTenantID, tenantID)
+}
+
+func GetTenantID(ctx context.Context) (uuid.UUID, error) {
+	v, ok := ctx.Value(keyTenantID).(uuid.UUID)
+	if !ok {
+		return uuid.Nil, errors.New("tenant id not found in context")
+	}
+	return v, nil
+}
+
+func setDashboardID(ctx context.Context, tenantID uuid.UUID) context.Context {
+	return context.WithValue(ctx, keyTenantID, tenantID)
+}
+
+func GetDashboardID(ctx context.Context) (uuid.UUID, error) {
+	v, ok := ctx.Value(keyTenantID).(uuid.UUID)
+	if !ok {
+		return uuid.Nil, errors.New("tenant id not found in context")
+	}
+	return v, nil
+}
 
 func setClaims(ctx context.Context, claims auth.Claims) context.Context {
 	return context.WithValue(ctx, claimKey, claims)

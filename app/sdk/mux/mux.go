@@ -4,6 +4,8 @@ import (
 	"embed"
 	"net/http"
 
+	"github.com/jcpaschoal/spi-exata/app/sdk/auth"
+	"github.com/jcpaschoal/spi-exata/app/sdk/mid"
 	"github.com/jcpaschoal/spi-exata/business/domain/userbus"
 	"github.com/jcpaschoal/spi-exata/business/sdk/web"
 	"github.com/jcpaschoal/spi-exata/foundatiton/logger"
@@ -43,11 +45,6 @@ func WithFileServer(react bool, static embed.FS, dir string, path string) func(o
 	}
 }
 
-// SalesConfig contains sales service specific config.
-type SalesConfig struct {
-	AuthClient authclient.Authenticator
-}
-
 // AuthConfig contains auth service specific config.
 type AuthConfig struct {
 	Auth *auth.Auth
@@ -59,13 +56,12 @@ type BusConfig struct {
 
 // Config contains all the mandatory systems required by handlers.
 type Config struct {
-	Build       string
-	Log         *logger.Logger
-	DB          *sqlx.DB
-	Tracer      trace.Tracer
-	BusConfig   BusConfig
-	SalesConfig SalesConfig
-	AuthConfig  AuthConfig
+	Build      string
+	Log        *logger.Logger
+	DB         *sqlx.DB
+	Tracer     trace.Tracer
+	BusConfig  BusConfig
+	AuthConfig AuthConfig
 }
 
 // RouteAdder defines behavior that sets the routes to bind for an instance

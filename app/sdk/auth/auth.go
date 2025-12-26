@@ -4,37 +4,36 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
+	"time"
 
-	"github.com/casbin/casbin/v2"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"github.com/jcpaschoal/spi-exata/app/sdk/errs"
 	"github.com/jcpaschoal/spi-exata/business/domain/userbus"
-	"github.com/jcpaschoal/spi-exata/business/types/actions"
-	"github.com/jcpaschoal/spi-exata/business/types/resource"
+	"github.com/jcpaschoal/spi-exata/business/types/role"
 	"github.com/jcpaschoal/spi-exata/foundatiton/logger"
 )
 
+// Erros padronizados do pacote de autenticação
 var (
-	ErrForbidden             = errors.New("attempted action is not allowed")
-	ErrKIDMissing            = errors.New("kid missing from token header")
-	ErrKIDMalformed          = errors.New("kid in token header is malformed")
-	ErrUserDisabled          = errors.New("user is disabled")
-	ErrInvalidAuthentication = errors.New("policy evaluation failed for authentication")
-	ErrInvalidAuthorization  = errors.New("policy evaluation failed for authorization")
-	ErrInvalidID             = errors.New("ID is not in its proper form")
+	ErrForbidden    = errors.New("attempted action is not allowed")
+	ErrKIDMissing   = errors.New("kid missing from token header")
+	ErrKIDMalformed = errors.New("kid in token header is malformed")
+	ErrUserDisabled = errors.New("user is disabled")
+	ErrInvalidRole  = errors.New("token contains an invalid role")
 )
 
 // Claims represents the authorization claims transmitted via a JWT.
 type Claims struct {
 	jwt.RegisteredClaims
-	Role string `json:"role"`
+	TenantID    string `json:"tenant_id,omitempty"`
+	DashboardID string `json:"dashboard_id"`
+	Role        string `json:"role"`
 }
 
 // KeyLookup declares a method set of behavior for looking up
-// private and public keys for JWT use. The return could be a
-// PEM encoded string or a JWS based key.
+// private and public keys for JWT use.
 type KeyLookup interface {
 	PrivateKey(kid string) (key string, err error)
 	PublicKey(kid string) (key string, err error)
@@ -43,18 +42,16 @@ type KeyLookup interface {
 // Config represents information required to initialize auth.
 type Config struct {
 	Log       *logger.Logger
-	UserBus   userbus.Core
+	UserBus   *userbus.Core // Usado para validar se o usuário está ativo/enabled
 	KeyLookup KeyLookup
 	Issuer    string
 }
 
-// Auth is used to authenticate clients. It can generate a token for a
-// set of user claims and recreate the claims by parsing the token.
+// Auth is used to authenticate clients.
 type Auth struct {
 	log       *logger.Logger
 	keyLookup KeyLookup
 	userBus   *userbus.Core
-	enforcer  *casbin.Enforcer
 	method    jwt.SigningMethod
 	parser    *jwt.Parser
 	issuer    string
@@ -65,7 +62,7 @@ func New(cfg Config) *Auth {
 	return &Auth{
 		log:       cfg.Log,
 		keyLookup: cfg.KeyLookup,
-		userBus:   &cfg.UserBus,
+		userBus:   cfg.UserBus,
 		method:    jwt.GetSigningMethod(jwt.SigningMethodRS256.Name),
 		parser:    jwt.NewParser(jwt.WithValidMethods([]string{jwt.SigningMethodRS256.Name})),
 		issuer:    cfg.Issuer,
@@ -78,7 +75,26 @@ func (a *Auth) Issuer() string {
 }
 
 // GenerateToken generates a signed JWT token string representing the user Claims.
-func (a *Auth) GenerateToken(kid string, claims Claims) (string, error) {
+// Aceita role.Role tipada para garantir integridade.
+func (a *Auth) GenerateToken(kid string, tenantID uuid.UUID, userID uuid.UUID, dashboardID uuid.UUID, r role.Role) (string, error) {
+
+	var tid string
+	if tenantID != uuid.Nil {
+		tid = tenantID.String()
+	}
+
+	claims := Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   userID.String(),
+			Issuer:    a.issuer,
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
+		TenantID:    tid,
+		DashboardID: dashboardID.String(),
+		Role:        r.String(),
+	}
+
 	token := jwt.NewWithClaims(a.method, claims)
 	token.Header["kid"] = kid
 
@@ -134,6 +150,12 @@ func (a *Auth) Authenticate(ctx context.Context, bearerToken string) (Claims, er
 		return Claims{}, fmt.Errorf("authentication failed: %w", err)
 	}
 
+	// Valida se a Role que está no token é uma Role conhecida pelo sistema.
+	if _, err := role.Parse(claims.Role); err != nil {
+		return Claims{}, ErrInvalidRole
+	}
+
+	// Verifica no banco se o usuário ainda está ativo/habilitado
 	if err := a.isUserEnabled(ctx, claims); err != nil {
 		return Claims{}, fmt.Errorf("user not enabled: %w", err)
 	}
@@ -141,53 +163,24 @@ func (a *Auth) Authenticate(ctx context.Context, bearerToken string) (Claims, er
 	return claims, nil
 }
 
-// Authorize performs a two-stage access verification (Double Guard):
-// 1. Resource Check: Validates if the user has the required permission for the resource type (e.g., DASHBOARD).
-// 2. Instance Check: If a resourceID is provided, validates if the user has permission for that specific instance (ACL).
-// Returns nil if authorized, otherwise returns a wrapped ErrInvalidAuthorization.
-func (a *Auth) Authorize(userID uuid.UUID, res resource.Resource, act actions.Action, resourceID string) error {
-	uid := userID.String()
-	action := act.String()
-
-	// Stage 1: Functional access check using resource.
-	if err := a.performCheck(uid, res.String(), action, "resource"); err != nil {
-		return err
+// Authorize checks if the claims possess ONE OF the required roles.
+// This allows a route to be accessible by multiple roles (e.g., Admin OR Analyst).
+func (a *Auth) Authorize(ctx context.Context, claims Claims, allowedRoles ...role.Role) error {
+	// Se nenhuma role for passada na rota, bloqueia por padrão (Secure by Default).
+	if len(allowedRoles) == 0 {
+		return fmt.Errorf("%w: no roles authorized for this endpoint", ErrForbidden)
 	}
 
-	// Stage 2: Instance-level access check using Resource UUID.
-	if resourceID != "" {
-
-		resourceID, err := uuid.Parse(resourceID)
-		if err != nil {
-			return errs.New(errs.FailedPrecondition, fmt.Errorf("ID is not in its proper form : %w", err))
-		}
-
-		if err := a.performCheck(uid, resourceID.String(), action, "instance"); err != nil {
-			return err
+	for _, r := range allowedRoles {
+		if claims.Role == r.String() {
+			return nil // Match found! Access granted.
 		}
 	}
 
-	return nil
+	return fmt.Errorf("%w: user role %q is not in the allowed list %v", ErrForbidden, claims.Role, allowedRoles)
 }
 
-// performCheck is a private helper that wraps the Casbin Enforce logic.
-// It centralizes error handling and boolean evaluation to keep the primary flow lean.
-func (a *Auth) performCheck(sub, obj, act, scope string) error {
-	allowed, err := a.enforcer.Enforce(sub, obj, act)
-	if err != nil {
-		return fmt.Errorf("authz internal error during %s check: %w", scope, err)
-	}
-
-	if !allowed {
-		return fmt.Errorf("%w: user %s lacks %s permission on %s (%s scope)",
-			ErrInvalidAuthorization, sub, act, obj, scope)
-	}
-
-	return nil
-}
-
-// isUserEnabled hits the database and checks the user is not disabled. If the
-// no database connection was provided, this check is skipped.
+// isUserEnabled checks if the user is active in the database.
 func (a *Auth) isUserEnabled(ctx context.Context, claims Claims) error {
 	if a.userBus == nil {
 		return nil
@@ -240,64 +233,9 @@ func (a *Auth) verifySignatureAndClaims(tokenStr, pemStr string) error {
 	return nil
 }
 
-func (a *Auth) AddPolicy(ctx context.Context, userID uuid.UUID, res resource.Resource, act actions.Action, resourceID *uuid.UUID) error {
-	obj := a.resolveObject(res, resourceID)
-	sub := userID.String()
-	action := act.String()
-
-	// AddPolicy returns false if the rule already exists.
-	// We usually don't treat this as an error, but you can if strictness is required.
-	added, err := a.enforcer.AddPolicy(sub, obj, action)
-	if err != nil {
-		return fmt.Errorf("failed to add policy to enforcer: %w", err)
+func ExtractDomain(host string) string {
+	if host, _, err := net.SplitHostPort(host); err == nil {
+		return host
 	}
-
-	if !added {
-		a.log.Info(ctx, "policy already exists", "sub", sub, "obj", obj, "act", action)
-	}
-
-	return nil
-}
-
-// RemovePolicy removes an existing permission rule from the enforcer.
-func (a *Auth) RemovePolicy(ctx context.Context, userID uuid.UUID, res resource.Resource, act actions.Action, resourceID *uuid.UUID) error {
-	obj := a.resolveObject(res, resourceID)
-	sub := userID.String()
-	action := act.String()
-
-	removed, err := a.enforcer.RemovePolicy(sub, obj, action)
-	if err != nil {
-		return fmt.Errorf("failed to remove policy from enforcer: %w", err)
-	}
-
-	if !removed {
-		return fmt.Errorf("policy not found to remove: %s, %s, %s", sub, obj, action)
-	}
-
-	return nil
-}
-
-// UpdatePolicy updates a permission by modifying the action for a specific user and resource.
-// Since Casbin doesn't have a direct "Update specific field" for SQL adapters efficiently,
-// we implement this as an atomic Remove + Add.
-func (a *Auth) UpdatePolicy(ctx context.Context, userID uuid.UUID, res resource.Resource, resourceID *uuid.UUID, oldAct, newAct actions.Action) error {
-	if err := a.RemovePolicy(ctx, userID, res, oldAct, resourceID); err != nil {
-		return fmt.Errorf("update failed (remove step): %w", err)
-	}
-
-	// 2. Add the new rule
-	if err := a.AddPolicy(ctx, userID, res, newAct, resourceID); err != nil {
-		return fmt.Errorf("update failed (add step): %w", err)
-	}
-
-	return nil
-}
-
-// resolveObject determines whether the policy target is a generic Resource Tag
-// or a specific Instance UUID based on the input.
-func (a *Auth) resolveObject(res resource.Resource, resourceID *uuid.UUID) string {
-	if resourceID != nil {
-		return resourceID.String() // Instance Scope (e.g., "550e8400-...")
-	}
-	return res.String()
+	return host
 }
