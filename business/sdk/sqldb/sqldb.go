@@ -12,8 +12,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
-	"github.com/jcpaschoal/spi-exata/foundatiton/logger"
-	"github.com/jcpaschoal/spi-exata/foundatiton/otel"
+	"github.com/jcpaschoal/spi-exata/foundation/logger"
+	"github.com/jcpaschoal/spi-exata/foundation/otel"
 	"github.com/jmoiron/sqlx"
 	"go.opentelemetry.io/otel/attribute"
 )

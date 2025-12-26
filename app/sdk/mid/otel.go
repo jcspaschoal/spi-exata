@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	"github.com/jcpaschoal/spi-exata/business/sdk/web"
-	"github.com/jcpaschoal/spi-exata/foundatiton/otel"
+	"github.com/jcpaschoal/spi-exata/foundation/otel"
 	"go.opentelemetry.io/otel/trace"
 )
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/mail"
 	"strings"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jcpaschoal/spi-exata/business/domain/userbus"
 	"github.com/jcpaschoal/spi-exata/business/types/role"
-	"github.com/jcpaschoal/spi-exata/foundatiton/logger"
+	"github.com/jcpaschoal/spi-exata/foundation/logger"
 )
 
 // Erros padronizados do pacote de autenticação
@@ -231,6 +232,18 @@ func (a *Auth) verifySignatureAndClaims(tokenStr, pemStr string) error {
 	}
 
 	return nil
+}
+
+// verifySignatureAndClaims parses the token with the public key, validates the signature, and checks the issuer claim.
+func (a *Auth) Login(ctx context.Context, email mail.Address, password string) (userbus.User, error) {
+
+	usr, err := a.userBus.Authenticate(ctx, email, password)
+
+	if err != nil {
+		return userbus.User{}, fmt.Errorf("invalid credentials: %w", err)
+	}
+
+	return usr, nil
 }
 
 func ExtractDomain(host string) string {

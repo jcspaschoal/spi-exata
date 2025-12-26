@@ -8,8 +8,8 @@ import (
 
 	"github.com/jcpaschoal/spi-exata/app/sdk/errs"
 	"github.com/jcpaschoal/spi-exata/business/sdk/web"
-	"github.com/jcpaschoal/spi-exata/foundatiton/logger"
-	"github.com/jcpaschoal/spi-exata/foundatiton/otel"
+	"github.com/jcpaschoal/spi-exata/foundation/logger"
+	"github.com/jcpaschoal/spi-exata/foundation/otel"
 )
 
 // Errors handles errors coming out of the call chain.

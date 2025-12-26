@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jcpaschoal/spi-exata/business/domain/tenantbus"
 	"github.com/jcpaschoal/spi-exata/business/sdk/sqldb"
-	"github.com/jcpaschoal/spi-exata/foundatiton/logger"
+	"github.com/jcpaschoal/spi-exata/foundation/logger"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -223,13 +223,17 @@ func (s *Store) CheckTenantAccess(ctx context.Context, userID uuid.UUID, tenantI
 
 // CheckUserDashboardAccess checks granular permissions for a user on a dashboard.
 // Uses the composite PK (user_id, dashboard_id).
-func (s *Store) CheckUserDashboardAccess(ctx context.Context, userID uuid.UUID, dashboardID uuid.UUID) error {
+// CheckUserDashboardAccess checks granular permissions for a user on a dashboard.
+// Uses the composite PK (user_id, dashboard_id) and validates the tenant context.
+func (s *Store) CheckUserDashboardAccess(ctx context.Context, userID uuid.UUID, dashboardID uuid.UUID, tenantID uuid.UUID) error {
 	data := struct {
 		UserID      string `db:"user_id"`
 		DashboardID string `db:"dashboard_id"`
+		TenantID    string `db:"tenant_id"`
 	}{
 		UserID:      userID.String(),
 		DashboardID: dashboardID.String(),
+		TenantID:    tenantID.String(),
 	}
 
 	const q = `
@@ -238,7 +242,9 @@ func (s *Store) CheckUserDashboardAccess(ctx context.Context, userID uuid.UUID, 
 	FROM
 		"public"."user_dashboard_access"
 	WHERE
-		user_id = :user_id AND dashboard_id = :dashboard_id`
+		user_id = :user_id 
+		AND dashboard_id = :dashboard_id 
+		AND tenant_id = :tenant_id`
 
 	var result struct {
 		Exists int `db:"?column?"`

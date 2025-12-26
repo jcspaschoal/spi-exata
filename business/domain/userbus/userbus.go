@@ -11,7 +11,7 @@ import (
 	"github.com/jcpaschoal/spi-exata/business/sdk/order"
 	"github.com/jcpaschoal/spi-exata/business/sdk/page"
 	"github.com/jcpaschoal/spi-exata/business/sdk/sqldb"
-	"github.com/jcpaschoal/spi-exata/foundatiton/otel"
+	"github.com/jcpaschoal/spi-exata/foundation/otel"
 	"golang.org/x/crypto/bcrypt"
 )
 

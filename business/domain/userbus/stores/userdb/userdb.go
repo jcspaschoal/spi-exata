@@ -12,7 +12,7 @@ import (
 	"github.com/jcpaschoal/spi-exata/business/sdk/order"
 	"github.com/jcpaschoal/spi-exata/business/sdk/page"
 	"github.com/jcpaschoal/spi-exata/business/sdk/sqldb"
-	"github.com/jcpaschoal/spi-exata/foundatiton/logger"
+	"github.com/jcpaschoal/spi-exata/foundation/logger"
 	"github.com/jmoiron/sqlx"
 )
 

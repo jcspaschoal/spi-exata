@@ -8,8 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jcpaschoal/spi-exata/business/sdk/sqldb"
-	"github.com/jcpaschoal/spi-exata/foundatiton/logger"
-	"github.com/jcpaschoal/spi-exata/foundatiton/otel"
+	"github.com/jcpaschoal/spi-exata/foundation/logger"
+	"github.com/jcpaschoal/spi-exata/foundation/otel"
 )
 
 var (
