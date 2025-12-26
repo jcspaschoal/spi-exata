@@ -24,7 +24,7 @@ func Routes(app *web.App, cfg Config) {
 	authen := mid.Authenticate(cfg.Auth)
 
 	// Instanciamos a API
-	api := newApp(cfg.Auth, cfg.UserBus)
+	api := newApp(cfg.UserBus)
 
 	// GET /users
 	app.HandlerFunc(http.MethodGet, version, "/users", api.query, authen, mid.Authorize(cfg.Auth, role.Admin))

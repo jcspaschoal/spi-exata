@@ -6,7 +6,6 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
-	"github.com/jcpaschoal/spi-exata/app/sdk/auth"
 	"github.com/jcpaschoal/spi-exata/app/sdk/errs"
 	"github.com/jcpaschoal/spi-exata/app/sdk/mid"
 	"github.com/jcpaschoal/spi-exata/app/sdk/query"
@@ -19,14 +18,12 @@ import (
 // app manages the set of app layer api functions for the user domain.
 // Nota: Até a struct pode ser privada (app) se só for usada aqui e no route.go
 type app struct {
-	auth    *auth.Auth
 	userBus *userbus.Core
 }
 
 // newApp constructs a user app API for use.
-func newApp(auth *auth.Auth, userBus *userbus.Core) *app {
+func newApp(userBus *userbus.Core) *app {
 	return &app{
-		auth:    auth,
 		userBus: userBus,
 	}
 }
@@ -54,7 +51,7 @@ func (a *app) create(ctx context.Context, r *http.Request) web.Encoder {
 		return errs.Errorf(errs.InternalOnlyLog, "create: usr[%+v]: %s", usr, err)
 	}
 
-	return &CreatedUser{User: toAppUser(usr)}
+	return toAppUser(usr)
 }
 
 // update updates an existing user.

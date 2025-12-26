@@ -3,7 +3,6 @@ package userapp
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"net/mail"
 	"time"
 
@@ -35,16 +34,6 @@ type User struct {
 func (u User) Encode() ([]byte, string, error) {
 	data, err := json.Marshal(u)
 	return data, "application/json", err
-}
-
-// CreatedUser is a wrapper to enforce 201 Created status.
-type CreatedUser struct {
-	User
-}
-
-// HTTPStatus implements the web.httpStatus interface.
-func (c *CreatedUser) HTTPStatus() int {
-	return http.StatusCreated
 }
 
 func toAppUser(bus userbus.User) User {
