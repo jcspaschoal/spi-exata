@@ -51,6 +51,11 @@ type Config struct {
 		MaxOpenConns int    `envconfig:"DB_MAX_OPEN_CONNS" default:"0"`
 		DisableTLS   bool   `envconfig:"DB_DISABLE_TLS" default:"true"`
 	}
+	Auth struct {
+		KeysFolder string `envconfig:"AUTH_KEYS_FOLDER" default:"foundation/zarf/keys/"`
+		Issuer     string `envconfig:"AUTH_ISSUER" default:"spi-exata"`
+		ActiveKID  string `envconfig:"AUTH_ACTIVE_KID" default:"e02696d9-f1b7-4c0a-b78c-90eb05d5f998"`
+	}
 	Tempo struct {
 		Host        string  `envconfig:"TEMPO_HOST" default:"tempo:4317"`
 		ServiceName string  `envconfig:"TEMPO_SERVICE_NAME" default:"SPI-EXATA"`
@@ -174,11 +179,15 @@ func run(ctx context.Context, log *logger.Logger) error {
 	signal.Notify(shutdown, syscall.SIGINT, syscall.SIGTERM)
 
 	cfgMux := mux.Config{
-		Build:      cfg.Version.Build,
-		Log:        log,
-		DB:         db,
-		Tracer:     tracer,
-		AuthConfig: mux.AuthConfig{ks, "https://spiexata.com/auth/"},
+		Build:  cfg.Version.Build,
+		Log:    log,
+		DB:     db,
+		Tracer: tracer,
+		AuthConfig: mux.AuthConfig{
+			KeyLookup: ks,
+			Issuer:    cfg.Auth.Issuer,
+			ActiveKID: cfg.Auth.ActiveKID,
+		},
 	}
 
 	webAPI := mux.WebAPI(cfgMux,

@@ -27,6 +27,7 @@ func WithCORS(origins []string) func(opts *Options) {
 type AuthConfig struct {
 	KeyLookup auth.KeyLookup
 	Issuer    string
+	ActiveKID string
 }
 
 // Config contains all the mandatory systems required by handlers.

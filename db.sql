@@ -66,6 +66,7 @@ CREATE TABLE "public"."users" (
                                   "role_id"    smallint NOT NULL,
                                   "name"       varchar(256) NOT NULL,
                                   "email"      varchar(120) NOT NULL,
+                                  "phone"      varchar(16),
                                   "password"   char(60) NOT NULL,
                                   "enabled"    boolean NOT NULL DEFAULT true,
                                   "created_at" timestamptz NOT NULL DEFAULT now(),

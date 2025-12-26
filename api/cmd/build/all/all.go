@@ -33,6 +33,7 @@ func (add) Add(app *web.App, cfg mux.Config) {
 		UserBus:   userBus,
 		KeyLookup: cfg.AuthConfig.KeyLookup,
 		Issuer:    cfg.AuthConfig.Issuer,
+		ActiveKID: cfg.AuthConfig.ActiveKID,
 	})
 
 	userapp.Routes(app, userapp.Config{

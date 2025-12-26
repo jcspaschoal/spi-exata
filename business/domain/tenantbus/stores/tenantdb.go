@@ -290,3 +290,77 @@ func (s *Store) QueryTenantIDByUserID(ctx context.Context, userID uuid.UUID) (uu
 
 	return result.TenantID, nil
 }
+
+func (s *Store) QueryTenantIDByDashboardID(ctx context.Context, dashboardID uuid.UUID) (uuid.UUID, error) {
+	data := struct {
+		ID string `db:"dashboard_id"`
+	}{
+		ID: dashboardID.String(),
+	}
+
+	const q = `
+	SELECT tenant_id
+	FROM "public"."dashboard"
+	WHERE dashboard_id = :dashboard_id`
+
+	var result struct {
+		TenantID uuid.UUID `db:"tenant_id"`
+	}
+
+	if err := sqldb.NamedQueryStruct(ctx, s.log, s.db, q, data, &result); err != nil {
+		if errors.Is(err, sqldb.ErrDBNotFound) {
+			return uuid.Nil, tenantbus.ErrNotFound
+		}
+		return uuid.Nil, fmt.Errorf("db: %w", err)
+	}
+
+	return result.TenantID, nil
+}
+
+// AddUserToTenant inserts a record into tenant_membership.
+func (s *Store) AddUserToTenant(ctx context.Context, userID uuid.UUID, tenantID uuid.UUID) error {
+	data := struct {
+		UserID   string `db:"user_id"`
+		TenantID string `db:"tenant_id"`
+	}{
+		UserID:   userID.String(),
+		TenantID: tenantID.String(),
+	}
+
+	// ON CONFLICT DO NOTHING garante idempotência se rodar o utilitário 2 vezes
+	const q = `
+	INSERT INTO "public"."tenant_membership" (user_id, tenant_id, created_at)
+	VALUES (:user_id, :tenant_id, NOW())
+	ON CONFLICT (user_id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id`
+	// Nota: Como a PK é user_id (1:1 strict), atualizamos o tenant se o usuário já tiver um.
+
+	if err := sqldb.NamedExecContext(ctx, s.log, s.db, q, data); err != nil {
+		return fmt.Errorf("namedexeccontext: %w", err)
+	}
+
+	return nil
+}
+
+// AddUserToDashboard inserts a record into user_dashboard_access.
+func (s *Store) AddUserToDashboard(ctx context.Context, userID uuid.UUID, dashboardID uuid.UUID, tenantID uuid.UUID) error {
+	data := struct {
+		UserID      string `db:"user_id"`
+		DashboardID string `db:"dashboard_id"`
+		TenantID    string `db:"tenant_id"`
+	}{
+		UserID:      userID.String(),
+		DashboardID: dashboardID.String(),
+		TenantID:    tenantID.String(),
+	}
+
+	const q = `
+	INSERT INTO "public"."user_dashboard_access" (user_id, dashboard_id, tenant_id, created_at)
+	VALUES (:user_id, :dashboard_id, :tenant_id, NOW())
+	ON CONFLICT (user_id, dashboard_id) DO NOTHING`
+
+	if err := sqldb.NamedExecContext(ctx, s.log, s.db, q, data); err != nil {
+		return fmt.Errorf("namedexeccontext: %w", err)
+	}
+
+	return nil
+}

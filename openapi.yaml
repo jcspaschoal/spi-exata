@@ -1,0 +1,350 @@
+openapi: 3.0.3
+info:
+  title: SPI Exata API
+  description: API de gerenciamento de usuários e autenticação multi-tenant.
+  version: 1.25.4
+  contact:
+    name: API Support
+servers:
+  - url: http://localhost:3000
+    description: Servidor Local
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    # ==========================================
+    # Auth Models
+    # ==========================================
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          example: admin@corp.com
+        password:
+          type: string
+          format: password
+          example: Secret123!
+
+    TokenResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          description: JWT Bearer Token
+          example: eyJhbGciOiJSUzI1NiIs...
+
+    # ==========================================
+    # User Models
+    # ==========================================
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 7247a893-1225-44af-8758-b5c3d4faf5c1
+        name:
+          type: string
+          example: João Silva
+        email:
+          type: string
+          format: email
+          example: joao@corp.com
+        role:
+          type: string
+          enum: [ADMIN, ANALYST, USER]
+          example: USER
+        phone:
+          type: string
+          nullable: true
+          example: "+5511999999999"
+        enabled:
+          type: boolean
+          example: true
+        dateCreated:
+          type: string
+          format: date-time
+        dateUpdated:
+          type: string
+          format: date-time
+
+    NewUserRequest:
+      type: object
+      required:
+        - name
+        - email
+        - role
+        - password
+        - passwordConfirm
+      properties:
+        name:
+          type: string
+          example: Novo Usuário
+        email:
+          type: string
+          format: email
+          example: novo@corp.com
+        role:
+          type: string
+          enum: [ADMIN, ANALYST, USER]
+          description: Nível de permissão do usuário.
+        phone:
+          type: string
+          example: "+5511988888888"
+        password:
+          type: string
+          format: password
+          minLength: 3
+        passwordConfirm:
+          type: string
+          format: password
+          description: Deve ser idêntico ao password.
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+        password:
+          type: string
+          format: password
+        passwordConfirm:
+          type: string
+          format: password
+        enabled:
+          type: boolean
+
+    # ==========================================
+    # Pagination & Errors
+    # ==========================================
+    UserPagedResult:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/User'
+        total:
+          type: integer
+          example: 50
+        page:
+          type: integer
+          example: 1
+        rowsPerPage:
+          type: integer
+          example: 10
+
+    Error:
+      type: object
+      properties:
+        code:
+          type: object
+          properties:
+            value:
+              type: integer
+        message:
+          type: string
+
+tags:
+  - name: Auth
+    description: Autenticação e geração de tokens
+  - name: Users
+    description: Gerenciamento de usuários
+
+paths:
+  # ==========================================
+  # AUTH ROUTES
+  # ==========================================
+  /v1/auth/login:
+    post:
+      tags:
+        - Auth
+      summary: Realizar Login
+      description: Autentica um usuário via email e senha e retorna um token JWT.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login realizado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          description: Dados inválidos (Email/Senha formatados incorretamente)
+        '401':
+          description: Credenciais incorretas
+        '500':
+          description: Erro interno
+
+  # ==========================================
+  # USER ROUTES (ADMIN)
+  # ==========================================
+  /v1/users:
+    get:
+      tags:
+        - Users
+      summary: Listar Usuários (Admin)
+      description: Retorna uma lista paginada de usuários. Requer role ADMIN.
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+          description: Número da página
+        - in: query
+          name: rows
+          schema:
+            type: integer
+            default: 10
+          description: Itens por página
+        - in: query
+          name: orderBy
+          schema:
+            type: string
+            default: user_id,ASC
+          description: "Campo de ordenação (ex: name,ASC ou email,DESC)"
+        - in: query
+          name: name
+          schema:
+            type: string
+          description: Filtro por nome (LIKE)
+        - in: query
+          name: email
+          schema:
+            type: string
+          description: Filtro exato por email
+        - in: query
+          name: start_created_date
+          schema:
+            type: string
+            format: date-time
+          description: Filtro data inicial de criação
+        - in: query
+          name: end_created_date
+          schema:
+            type: string
+            format: date-time
+          description: Filtro data final de criação
+      responses:
+        '200':
+          description: Lista de usuários recuperada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPagedResult'
+        '401':
+          description: Não autenticado
+        '403':
+          description: Acesso negado (Requer ADMIN)
+
+    post:
+      tags:
+        - Users
+      summary: Criar Usuário (Admin)
+      description: Adiciona um novo usuário ao sistema. Requer role ADMIN.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewUserRequest'
+      responses:
+        '201':
+          description: Usuário criado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Erro de validação ou dados incorretos
+        '409':
+          description: Email já existente
+
+  /v1/users/{user_id}:
+    get:
+      tags:
+        - Users
+      summary: Buscar Usuário por ID (Admin)
+      description: Retorna os detalhes de um usuário específico. Requer role ADMIN.
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: UUID do usuário
+      responses:
+        '200':
+          description: Usuário encontrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          description: Usuário não encontrado
+
+  # ==========================================
+  # USER ROUTES (SELF / ME)
+  # ==========================================
+  /v1/me:
+    put:
+      tags:
+        - Users
+      summary: Atualizar Próprio Perfil
+      description: Atualiza os dados do usuário logado.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        '200':
+          description: Perfil atualizado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Dados inválidos
+
+    delete:
+      tags:
+        - Users
+      summary: Deletar Própria Conta
+      description: Remove a conta do usuário logado.
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Conta deletada com sucesso (No Content)
+        '500':
+          description: Erro interno ao deletar

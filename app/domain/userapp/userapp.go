@@ -51,7 +51,7 @@ func (a *app) create(ctx context.Context, r *http.Request) web.Encoder {
 		if errors.Is(err, userbus.ErrUniquePhone) {
 			return errs.New(errs.Aborted, userbus.ErrUniquePhone)
 		}
-		return errs.Errorf(errs.Internal, "create: usr[%+v]: %s", usr, err)
+		return errs.Errorf(errs.InternalOnlyLog, "create: usr[%+v]: %s", usr, err)
 	}
 
 	return &CreatedUser{User: toAppUser(usr)}
@@ -76,7 +76,7 @@ func (a *app) update(ctx context.Context, r *http.Request) web.Encoder {
 
 	updUsr, err := a.userBus.Update(ctx, usr, uu)
 	if err != nil {
-		return errs.Errorf(errs.Internal, "update: userID[%s] uu[%+v]: %s", usr.ID, uu, err)
+		return errs.Errorf(errs.InternalOnlyLog, "update: userID[%s] uu[%+v]: %s", usr.ID, uu, err)
 	}
 
 	return toAppUser(updUsr)
@@ -100,7 +100,7 @@ func (a *app) updateRole(ctx context.Context, r *http.Request) web.Encoder {
 		if errors.Is(err, userbus.ErrNotFound) {
 			return errs.New(errs.NotFound, err)
 		}
-		return errs.Errorf(errs.Internal, "query user: %s", err)
+		return errs.Errorf(errs.InternalOnlyLog, "query user: %s", err)
 	}
 
 	uu, err := toBusUpdateUserRole(app)
@@ -110,7 +110,7 @@ func (a *app) updateRole(ctx context.Context, r *http.Request) web.Encoder {
 
 	updUsr, err := a.userBus.Update(ctx, usr, uu)
 	if err != nil {
-		return errs.Errorf(errs.Internal, "updaterole: userID[%s] uu[%+v]: %s", usr.ID, uu, err)
+		return errs.Errorf(errs.InternalOnlyLog, "updaterole: userID[%s] uu[%+v]: %s", usr.ID, uu, err)
 	}
 
 	return toAppUser(updUsr)
@@ -125,7 +125,7 @@ func (a *app) delete(ctx context.Context, _ *http.Request) web.Encoder {
 	}
 
 	if err := a.userBus.Delete(ctx, usr); err != nil {
-		return errs.Errorf(errs.Internal, "delete: userID[%s]: %s", usr.ID, err)
+		return errs.Errorf(errs.InternalOnlyLog, "delete: userID[%s]: %s", usr.ID, err)
 	}
 
 	return nil
@@ -170,7 +170,7 @@ func (a *app) query(ctx context.Context, r *http.Request) web.Encoder {
 func (a *app) queryByID(ctx context.Context, _ *http.Request) web.Encoder {
 	usr, err := mid.GetUser(ctx)
 	if err != nil {
-		return errs.Errorf(errs.Internal, "querybyid: %s", err)
+		return errs.Errorf(errs.Internal, "user missing in context: %s", err)
 	}
 
 	return toAppUser(usr)

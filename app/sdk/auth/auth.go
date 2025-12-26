@@ -46,6 +46,7 @@ type Config struct {
 	UserBus   *userbus.Core // Usado para validar se o usuário está ativo/enabled
 	KeyLookup KeyLookup
 	Issuer    string
+	ActiveKID string
 }
 
 // Auth is used to authenticate clients.
@@ -56,6 +57,7 @@ type Auth struct {
 	method    jwt.SigningMethod
 	parser    *jwt.Parser
 	issuer    string
+	activeKID string // <--- Armazenado na struct para uso no GenerateToken
 }
 
 // New creates an Auth to support authentication/authorization.
@@ -67,6 +69,7 @@ func New(cfg Config) *Auth {
 		method:    jwt.GetSigningMethod(jwt.SigningMethodRS256.Name),
 		parser:    jwt.NewParser(jwt.WithValidMethods([]string{jwt.SigningMethodRS256.Name})),
 		issuer:    cfg.Issuer,
+		activeKID: cfg.ActiveKID,
 	}
 }
 
@@ -77,7 +80,7 @@ func (a *Auth) Issuer() string {
 
 // GenerateToken generates a signed JWT token string representing the user Claims.
 // Aceita role.Role tipada para garantir integridade.
-func (a *Auth) GenerateToken(kid string, tenantID uuid.UUID, userID uuid.UUID, dashboardID uuid.UUID, r role.Role) (string, error) {
+func (a *Auth) GenerateToken(tenantID uuid.UUID, userID uuid.UUID, dashboardID uuid.UUID, r role.Role) (string, error) {
 
 	var tid string
 	if tenantID != uuid.Nil {
@@ -97,16 +100,19 @@ func (a *Auth) GenerateToken(kid string, tenantID uuid.UUID, userID uuid.UUID, d
 	}
 
 	token := jwt.NewWithClaims(a.method, claims)
-	token.Header["kid"] = kid
 
-	privateKeyPEM, err := a.keyLookup.PrivateKey(kid)
+	// Define o KID no cabeçalho para que, na validação, saibamos qual chave pública usar.
+	token.Header["kid"] = a.activeKID
+
+	// Recupera a chave privada correspondente ao ActiveKID
+	privateKeyPEM, err := a.keyLookup.PrivateKey(a.activeKID)
 	if err != nil {
-		return "", fmt.Errorf("private key: %w", err)
+		return "", fmt.Errorf("private key lookup for kid %q: %w", a.activeKID, err)
 	}
 
 	privateKey, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(privateKeyPEM))
 	if err != nil {
-		return "", fmt.Errorf("parsing private key from PEM: %w", err)
+		return "", fmt.Errorf("parsing private key: %w", err)
 	}
 
 	str, err := token.SignedString(privateKey)

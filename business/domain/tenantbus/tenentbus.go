@@ -35,6 +35,9 @@ type Storer interface {
 	CheckTenantAccess(ctx context.Context, userID uuid.UUID, tenantID uuid.UUID) error
 	CheckUserDashboardAccess(ctx context.Context, userID uuid.UUID, dashboardID uuid.UUID, tenantID uuid.UUID) error
 	QueryTenantIDByUserID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error)
+	QueryTenantIDByDashboardID(ctx context.Context, dashboardID uuid.UUID) (uuid.UUID, error)
+	AddUserToTenant(ctx context.Context, userID uuid.UUID, tenantID uuid.UUID) error
+	AddUserToDashboard(ctx context.Context, userID uuid.UUID, dashboardID uuid.UUID, tenantID uuid.UUID) error
 }
 
 // Core manages the set of APIs for tenant access.
@@ -204,4 +207,28 @@ func (c *Core) AuthorizeUserAccessToDashboard(ctx context.Context, userID uuid.U
 		return TenantDashboard{}, fmt.Errorf("checkUserDashboardAccess[%s]: %w", userID, err)
 	}
 	return td, nil
+}
+
+func (c *Core) GrantUserAccessToDashboard(ctx context.Context, userID uuid.UUID, dashboardID uuid.UUID) error {
+	ctx, span := otel.AddSpan(ctx, "business.tenantbus.grantUserAccessToDashboard")
+	defer span.End()
+
+	// 1. Descobrir qual é o Tenant deste Dashboard
+	tenantID, err := c.storer.QueryTenantIDByDashboardID(ctx, dashboardID)
+	if err != nil {
+		return fmt.Errorf("failed to get tenant for dashboard: %w", err)
+	}
+
+	// 2. Garantir membership no Tenant (1 User = 1 Tenant Membership neste contexto)
+	// A query SQL deve usar ON CONFLICT DO NOTHING se já existir.
+	if err := c.storer.AddUserToTenant(ctx, userID, tenantID); err != nil {
+		return fmt.Errorf("failed to add user to tenant membership: %w", err)
+	}
+
+	// 3. Adicionar registro na tabela de acesso user_dashboard_access
+	if err := c.storer.AddUserToDashboard(ctx, userID, dashboardID, tenantID); err != nil {
+		return fmt.Errorf("failed to grant dashboard access: %w", err)
+	}
+
+	return nil
 }
