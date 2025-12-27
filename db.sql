@@ -3,8 +3,7 @@
  * CORE INFRASTRUCTURE - ENTERPRISE MULTI-TENANT SAAS (NORMALIZED)
  * ==============================================================================================
  * Engine: PostgreSQL 18
- * Optimizations: Native UUIDv7, Hierarchical Tenancy (Anchor at Dashboard)
- * Model: 1 User = 1 Tenant (Strict)
+ * Revision: 2.1 (Widget Sizing Nullable)
  * ==============================================================================================
  */
 
@@ -51,13 +50,20 @@ CREATE TABLE "public"."resource_type" (
 );
 
 CREATE TABLE "public"."layout" (
-                                   "layout_id" smallint NOT NULL PRIMARY KEY, "name" varchar NOT NULL UNIQUE
+                                   "layout_id" smallint NOT NULL PRIMARY KEY,
+                                   "name" varchar NOT NULL UNIQUE
 );
+
 CREATE TABLE "public"."feed_category" (
-                                          "feed_category_id" smallint NOT NULL PRIMARY KEY, "name" varchar NOT NULL UNIQUE
+                                          "feed_category_id" smallint NOT NULL PRIMARY KEY,
+                                          "name" varchar NOT NULL UNIQUE
 );
+
+-- [[ ALTERAÇÃO AQUI: 'size' agora permite NULL ]] --
 CREATE TABLE "public"."widget_type" (
-                                        "widget_type_id" smallint NOT NULL PRIMARY KEY, "name" varchar NOT NULL UNIQUE
+                                        "widget_type_id" smallint NOT NULL PRIMARY KEY,
+                                        "name" varchar NOT NULL UNIQUE,
+                                        "size" varchar(32) -- NULLABLE: Front-end deve decidir o default se vier null
 );
 
 -- 5. USUÁRIOS (Identidade Pura)
@@ -87,7 +93,7 @@ CREATE TABLE "public"."password_reset_token" (
 
 -- 6. VÍNCULO DE TENANCY (Membership 1:1)
 CREATE TABLE "public"."tenant_membership" (
-                                              "user_id"    uuid NOT NULL, -- PK (Natural Key)
+                                              "user_id"    uuid NOT NULL,
                                               "tenant_id"  uuid NOT NULL,
                                               "created_at" timestamptz NOT NULL DEFAULT now(),
 
@@ -99,30 +105,20 @@ CREATE INDEX "idx_membership_tenant" ON "public"."tenant_membership" ("tenant_id
 
 
 -- 7. REGISTRY (Supertype Normalizado)
-/* * ALTERAÇÃO: 'tenant_id' removido.
- * O Resource serve apenas como registro de ID único e Tipo.
- * A propriedade (ownership) é definida nas tabelas filhas ou na hierarquia.
- */
 CREATE TABLE "public"."resource" (
                                      "resource_id"      uuid NOT NULL DEFAULT uuidv7(),
                                      "resource_type_id" smallint NOT NULL,
 
                                      CONSTRAINT "pk_resource" PRIMARY KEY ("resource_id"),
                                      CONSTRAINT "fk_resource_type" FOREIGN KEY ("resource_type_id") REFERENCES "public"."resource_type"("resource_type_id"),
-
-    -- Restrição composta necessária para integridade das tabelas filhas (Inheritance Simulation)
                                      CONSTRAINT "uq_resource_integrity" UNIQUE ("resource_id", "resource_type_id")
 );
 
 -- 8. DASHBOARD (Âncora de Tenancy)
-/*
- * NOTA: Dashboard mantém o 'tenant_id'.
- * Ele é a raiz da árvore de objetos. Pages e Subjects derivam o tenant através dele.
- */
 CREATE TABLE "public"."dashboard" (
                                       "dashboard_id"     uuid NOT NULL,
                                       "resource_type_id" smallint GENERATED ALWAYS AS (1) STORED,
-                                      "tenant_id"        uuid NOT NULL, -- Anchor
+                                      "tenant_id"        uuid NOT NULL,
                                       "name"             varchar NOT NULL,
                                       "domain"           varchar(255),
                                       "logo"             bytea,
@@ -132,7 +128,6 @@ CREATE TABLE "public"."dashboard" (
                                       CONSTRAINT "pk_dashboard" PRIMARY KEY ("dashboard_id"),
                                       CONSTRAINT "uq_dashboard_domain" UNIQUE ("domain"),
 
-    -- FK aponta para resource sem validar tenant (pois tenant não existe mais em resource)
                                       CONSTRAINT "fk_dashboard_resource_integrity" FOREIGN KEY ("dashboard_id", "resource_type_id")
                                           REFERENCES "public"."resource"("resource_id", "resource_type_id") ON DELETE CASCADE,
 
@@ -145,7 +140,7 @@ CREATE INDEX "idx_dashboard_tenant" ON "public"."dashboard" ("tenant_id");
 CREATE TABLE "public"."user_dashboard_access" (
                                                   "user_id"      uuid NOT NULL,
                                                   "dashboard_id" uuid NOT NULL,
-                                                  "tenant_id"    uuid NOT NULL, -- Mantido como denormalização útil para performance de query
+                                                  "tenant_id"    uuid NOT NULL,
                                                   "created_at"   timestamptz NOT NULL DEFAULT now(),
 
                                                   CONSTRAINT "pk_user_dashboard_access" PRIMARY KEY ("user_id", "dashboard_id"),
@@ -157,10 +152,6 @@ CREATE INDEX "idx_access_dashboard_reverse" ON "public"."user_dashboard_access" 
 
 -- 10. DEMAIS ENTIDADES (Page, Feed, Subject)
 
-/* * ALTERAÇÃO: 'tenant_id' removido.
- * Feed agora é uma entidade "flutuante" até ser associada a uma Page,
- * ou deve ser gerida estritamente pela aplicação.
- */
 CREATE TABLE "public"."feed" (
                                  "feed_id"     uuid NOT NULL DEFAULT uuidv7(),
                                  "keywords"    varchar(500) NOT NULL,
@@ -170,13 +161,10 @@ CREATE TABLE "public"."feed" (
                                  CONSTRAINT "fk_feed_category" FOREIGN KEY ("category_id") REFERENCES "public"."feed_category"("feed_category_id")
 );
 
-/* * ALTERAÇÃO: 'tenant_id' removido.
- * A segurança da Page depende de -> Dashboard -> Tenant.
- */
 CREATE TABLE "public"."page" (
                                  "page_id"          uuid NOT NULL,
                                  "resource_type_id" smallint GENERATED ALWAYS AS (2) STORED,
-                                 "dashboard_id"     uuid NOT NULL, -- FK para o Pai (Dono)
+                                 "dashboard_id"     uuid NOT NULL,
                                  "layout_id"        smallint NOT NULL,
                                  "title"            varchar NOT NULL,
                                  "text"             text,
@@ -187,7 +175,6 @@ CREATE TABLE "public"."page" (
 
                                  CONSTRAINT "pk_page" PRIMARY KEY ("page_id"),
 
-    -- Herança de Identidade (apenas ID e Tipo)
                                  CONSTRAINT "fk_page_resource_integrity" FOREIGN KEY ("page_id", "resource_type_id")
                                      REFERENCES "public"."resource"("resource_id", "resource_type_id") ON DELETE CASCADE,
 
@@ -197,13 +184,10 @@ CREATE TABLE "public"."page" (
 );
 CREATE INDEX "idx_page_dashboard_order" ON "public"."page" ("dashboard_id", "order");
 
-/* * ALTERAÇÃO: 'tenant_id' removido.
- * A segurança do Subject depende de -> Page -> Dashboard -> Tenant.
- */
 CREATE TABLE "public"."subject" (
                                     "subject_id"           uuid NOT NULL,
                                     "resource_type_id"     smallint GENERATED ALWAYS AS (3) STORED,
-                                    "page_id"              uuid, -- FK para o Pai
+                                    "page_id"              uuid,
                                     "widget_id"            smallint NOT NULL,
                                     "title"                varchar NOT NULL,
                                     "order"                smallint NOT NULL,
@@ -215,7 +199,6 @@ CREATE TABLE "public"."subject" (
 
                                     CONSTRAINT "pk_subject" PRIMARY KEY ("subject_id"),
 
-    -- Herança de Identidade
                                     CONSTRAINT "fk_subject_resource_integrity" FOREIGN KEY ("subject_id", "resource_type_id")
                                         REFERENCES "public"."resource"("resource_id", "resource_type_id") ON DELETE CASCADE,
 

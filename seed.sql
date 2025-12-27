@@ -109,4 +109,22 @@ DO $$
 
     END $$;
 
+
+
+-- Widgets de chart (novos tipos específicos)
+INSERT INTO public.widget_type (widget_type_id, name) VALUES
+                                                          (1, 'combo_column_line_dual_axis'),          -- Série Temporal (Linha)
+                                                          (2, 'time_series_line'),          -- Série Temporal (Linha)
+                                                          (3, 'share_of_voice_donut'),      -- Participação (Pizza/Donut)
+                                                          (4, 'ranking_bar_horizontal'),    -- Ranking (Barras Horizontais)
+                                                          (5, 'grouped_column_bar')       -- Barras Agrupadas (Categorias x Período)
+ON CONFLICT DO NOTHING;
+
+INSERT INTO public.layout (layout_id, name) VALUES
+                                                (4, 'text_with_feed'),
+                                                (5, 'widgets_only'),
+                                                (6, 'text_only');
+
+
+
 COMMIT;
